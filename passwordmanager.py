@@ -9,9 +9,12 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import random
-
+import threading
+import sys
 
 def send_email(admin_mail):
+    global verification_code
+
     code = str(random.randint(100000, 999999))
 
     message = MIMEMultipart()
@@ -33,7 +36,7 @@ def send_email(admin_mail):
 
         server = smtplib.SMTP(smtp_server, smtp_port)
         server.starttls()
-        email_password = "PASSWORDS"
+        email_password = "PASSWORD"
         if email_password is None:
             raise ValueError("Email password not set in environment variables.")
         server.login("SENDER_MAIL", email_password)
@@ -41,9 +44,10 @@ def send_email(admin_mail):
     except Exception as e:
         print(f"An error occurred while sending the email: {e}")
     finally:
-        server.quit()
-    return code
-
+        if 'server' in locals():
+            server.quit()
+    
+    verification_code = code
 
 def signature():
     signature = """
@@ -57,45 +61,45 @@ def signature():
     """
     print(signature)
 
-
 def clear_screen():
     if platform.system() == "Windows":
         os.system("cls")
     else:
         os.system("clear")
 
-
-def show():
-    if not os.path.exists('Passwords.bin'):
+def show(path):
+    if not os.path.exists(path):
         print(Fore.RED + "No passwords stored yet." + Style.RESET_ALL)
         return
 
-    with open('Passwords.bin', 'r') as file:
+    with open(path, 'r') as file:
         data = file.readlines()
 
     for line in data:
         decode_data = base64.b64decode(line.strip()).decode('utf-8')
         print(decode_data)
 
+def new(password, note, path):
+    if not os.path.exists(path):
+        index = 0
+    else:
+        index = sum(1 for _ in open(path, 'r'))
 
-def new(password, note):
-    with open("Passwords.bin", "a") as file:
-        index = sum(1 for _ in open('Passwords.bin', 'r'))
+    with open(path, "a") as file:
         new_data = f"{index + 1}-  {password}  <=>  {note}\n"
         file.write(base64.b64encode(new_data.encode('utf-8')).decode('utf-8') + '\n')
 
-
-def remove():
-    if not os.path.exists("Passwords.bin"):
+def remove(path):
+    if not os.path.exists(path):
         print(Fore.RED + "\nFile is empty!" + Style.RESET_ALL)
         time.sleep(3)
         return
 
-    with open("Passwords.bin", "r") as file:
+    with open(path, "r") as file:
         lines = file.readlines()
 
     clear_screen()
-    show()
+    show(path)
     lines_length = len(lines)
 
     while True:
@@ -109,17 +113,15 @@ def remove():
         except ValueError:
             print(Fore.RED + "\nInvalid input! Please enter a number." + Style.RESET_ALL)
 
-    with open("Passwords.bin", "w") as file:
+    with open(path, "w") as file:
         for line in lines:
             file.write(line)
 
     print(Fore.GREEN + "\nLine removed successfully!" + Style.RESET_ALL)
     time.sleep(3)
 
-
 def hash_password(password):
     return hashlib.sha256(password.encode('utf-8')).hexdigest()
-
 
 def resetkey(current_password_hash):
     temp = 2
@@ -137,10 +139,9 @@ def resetkey(current_password_hash):
             time.sleep(3)
             return True
 
-
-def create_or_load_admin_password():
-    if os.path.exists("User_Data.bin"):
-        with open("User_Data.bin", "r") as file:
+def create_or_load_admin_password(user_path):
+    if os.path.exists(user_path):
+        with open(user_path, "r") as file:
             password = file.readline().strip()
             mail = base64.b64decode(file.readline().strip()).decode('utf-8')
         return password, mail
@@ -154,16 +155,59 @@ def create_or_load_admin_password():
             else:
                 hashed_password = hash_password(create_admin_password)
                 hash_mail = base64.b64encode(admin_mail.encode('utf-8')).decode('utf-8')
-                with open("User_Data.bin", "w") as file:
+                with open(user_path, "w") as file:
                     file.write(hashed_password + "\n" + hash_mail)
                 print("Your password has been created successfully.")
                 time.sleep(3)
                 return hashed_password, admin_mail
 
+def loading(duration=5):  
+    start_time = time.time()  
+    loading_text = "loading"
+    
+    while time.time() - start_time < duration:  
+        for dots in range(4): 
+            if time.time() - start_time >= duration:  
+                break
+            sys.stdout.write("\r" + loading_text + "." * dots + " " * (3 - dots))  
+            sys.stdout.flush()  
+            time.sleep(0.5)
+    clear_screen()        
+
+def path():
+    appdata_path = os.getenv('LOCALAPPDATA')
+    my_app_data_path = os.path.join(appdata_path, 'PasswordManager')
+
+    if not os.path.exists(my_app_data_path):
+        os.makedirs(my_app_data_path)
+
+    user_data_path = os.path.join(my_app_data_path, 'User_Data.bin')
+    password_data_path = os.path.join(my_app_data_path, 'Passwords.bin')
+
+    return user_data_path, password_data_path, my_app_data_path
+
+def reset_PM(user_path, passwords_path):
+    os.system(f"powershell rm {user_path}")
+    os.system(f"powershell rm {passwords_path}")
+    os.system("cls")
+    print(Fore.GREEN + "Resetting successful. Exiting the program..." + Style.RESET_ALL)
+    time.sleep(3)
+    sys.exit()
+
+def open_directory(path):
+    os.startfile(path)
 
 def main():
-    admin_password_hash, admin_mail = create_or_load_admin_password()
-    verification_code = send_email(admin_mail)
+    global verification_code
+    verification_code = None
+    user_data_path , passwords_path , directory_path= path()
+    admin_password_hash, admin_mail = create_or_load_admin_password(user_data_path)
+    send_email_background = threading.Thread(target=send_email, args=(admin_mail,))
+    loading_background = threading.Thread(target=loading)
+    loading_background.start()
+    send_email_background.start()
+    send_email_background.join()
+    loading_background.join()
     temp = 3
     temp2 = 3
     while temp > 0:
@@ -180,20 +224,20 @@ def main():
                             print("\u226f━" * 20 + "ྼ١ By YAY ١ྼ" + "\u2501≯" * 20)
                             print(Fore.RED + "\nWELCOME TO PASSWORD MANAGER by YAY\n\n" + Style.RESET_ALL)
 
-                            print(Fore.RED + "1. Show passwords\n2. New password\n3. Remove password\n4. Reset key\n5. Quit" + Style.RESET_ALL)
+                            print(Fore.RED + "1. Show passwords\n2. New password\n3. Remove password\n4. Reset key\n5. Reset Program\n6. Open File Location\n7. Quit" + Style.RESET_ALL)
                             mod = int(input(Fore.RED + "=> " + Style.RESET_ALL))
                             if mod == 1:
                                 clear_screen()
-                                show()
+                                show(passwords_path)
                                 input("Press Enter to continue...")
                             elif mod == 2:
                                 clear_screen()
                                 enter_password = getpass.getpass("Enter the password you want to add: ")
                                 enter_note = input("Enter a note regarding the password: ")
-                                new(enter_password, enter_note)
+                                new(enter_password, enter_note, passwords_path)
                             elif mod == 3:
                                 clear_screen()
-                                remove()
+                                remove(passwords_path)
                             elif mod == 4:
                                 clear_screen()
                                 if resetkey(admin_password_hash):
@@ -205,12 +249,18 @@ def main():
                                             print(Fore.RED + "Passwords do not match" + Style.RESET_ALL)
                                         else:
                                             admin_password_hash = hash_password(new_admin_password)
-                                            with open("User_Data.bin", "w") as file:
+                                            with open(user_data_path, "w") as file:
                                                 file.write(admin_password_hash + "\n" + base64.b64encode(admin_mail.encode('utf-8')).decode('utf-8'))
                                             print("Your password has been updated.")
                                             time.sleep(3)
                                             break
                             elif mod == 5:
+                                os.system("cls")
+                                reset_PM(user_data_path, passwords_path)
+                            elif mod == 6:
+                                os.system("cls")
+                                open_directory(directory_path)
+                            elif mod == 7:
                                 print("bye")
                                 return
                             else:
